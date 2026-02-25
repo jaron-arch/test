@@ -1,0 +1,120 @@
+standard_fields:
+  - id: First Name
+    label: First Name
+    required: false
+    synonyms:
+      - first name
+      - firstname
+      - given name
+      - fname
+  - id: Last Name
+    label: Last Name
+    required: false
+    synonyms:
+      - last name
+      - lastname
+      - surname
+      - lname
+  - id: Job Title
+    label: Job Title
+    required: false
+    synonyms:
+      - title
+      - job title
+      - position
+      - role
+  - id: Company
+    label: Company
+    required: false
+    synonyms:
+      - company
+      - company name
+      - organization
+      - organisation
+      - employer
+  - id: Employee headcount size
+    label: Employee headcount size
+    required: false
+    synonyms:
+      - employee headcount size
+      - employee count
+      - employees
+      - number of employees
+      - staff size
+      - company size
+      - headcount
+  - id: Email
+    label: Email
+    required: true
+    synonyms:
+      - email
+      - e-mail
+      - email address
+      - e-mail address
+      - business email
+      - work email
+  - id: Phone Number
+    label: Phone Number
+    required: false
+    synonyms:
+      - phone
+      - phone number
+      - telephone
+      - telephone number
+      - mobile
+      - mobile phone
+      - direct dial
+  - id: Linkedin Profile URL
+    label: Linkedin Profile URL
+    required: false
+    synonyms:
+      - linkedin
+      - linkedin url
+      - linkedin profile
+      - linkedin profile url
+      - linkedin profile link
+  - id: Industry
+    label: Industry
+    required: false
+    synonyms:
+      - industry
+      - vertical
+      - sector
+      - what best describes your company
+  - id: Street address
+    label: Street address
+    required: false
+    synonyms:
+      - street address
+      - address
+      - address 1
+      - address line 1
+      - street
+  - id: City
+    label: City
+    required: false
+    synonyms:
+      - city
+      - town
+  - id: State
+    label: State
+    required: false
+    synonyms:
+      - state
+      - region
+      - province
+      - state/region
+      - state/province
+  - id: Zip
+    label: Zip
+    required: false
+    synonyms:
+      - zip
+      - zip code
+      - postal code
+      - postcode
+
+options:
+  # If true, keep any extra vendor columns under a "raw_" prefix
+  keep_unmapped_columns: true
+  unmapped_prefix: "raw_"
