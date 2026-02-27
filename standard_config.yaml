@@ -64,6 +64,9 @@ standard_fields:
       - mobile
       - mobile phone
       - direct dial
+      - work phone
+      - workphone
+      - work telephone
   - id: Linkedin Profile URL
     label: Linkedin Profile URL
     required: false
