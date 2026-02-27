@@ -473,24 +473,25 @@ def main() -> None:
         layout="wide",
     )
 
-    # Header: logo + title
-    logo_col, title_col = st.columns([1, 4])
+    # Header: logo + title in one row with balanced spacing
+    logo_col, title_col = st.columns([1, 5])
     with logo_col:
         logo_shown = False
         if os.path.exists(WORKSTREAM_LOGO_PATH):
             try:
-                st.image(WORKSTREAM_LOGO_PATH, width=180, use_container_width=False)
+                st.image(WORKSTREAM_LOGO_PATH, width=140, use_container_width=False)
                 logo_shown = True
             except Exception:
                 pass
         if not logo_shown:
             try:
-                st.image(WORKSTREAM_LOGO_URL, width=180, use_container_width=False)
+                st.image(WORKSTREAM_LOGO_URL, width=140, use_container_width=False)
             except Exception:
-                pass  # If logo fails to load, continue without it
+                pass
     with title_col:
         st.title("CSV Wrangler")
         st.caption(f"Version {APP_VERSION} · Last updated {APP_LAST_UPDATED}")
+    st.divider()
     st.markdown(
         """
 This tool helps our marketing team turn messy vendor lead lists into a clean, consistent format we can use in our CRM.
