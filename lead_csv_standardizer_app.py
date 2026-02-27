@@ -1,3 +1,4 @@
+import base64
 import io
 import os
 import re
@@ -466,6 +467,51 @@ WORKSTREAM_LOGO_PATH = "logo website.svg"
 WORKSTREAM_LOGO_URL = "https://www.workstream.us/hubfs/Workstream-2024/Images/dark%2Bwhite%20text.svg"
 
 
+def _render_header_with_logo() -> None:
+    """Render logo and title in one aligned row using custom HTML."""
+    logo_data_uri = None
+    if os.path.exists(WORKSTREAM_LOGO_PATH):
+        try:
+            with open(WORKSTREAM_LOGO_PATH, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            logo_data_uri = f"data:image/svg+xml;base64,{b64}"
+        except Exception:
+            pass
+
+    if logo_data_uri:
+        st.markdown(
+            f"""
+            <div style="
+                display: flex;
+                align-items: center;
+                gap: 20px;
+                margin-bottom: 24px;
+                padding-bottom: 16px;
+                border-bottom: 1px solid #e0e0e0;
+            ">
+                <img src="{logo_data_uri}" alt="Workstream" width="160" style="flex-shrink: 0; display: block;" />
+                <div>
+                    <h1 style="margin: 0; font-size: 2.25rem; font-weight: 600; color: #1f1f1f;">CSV Wrangler</h1>
+                    <p style="margin: 4px 0 0 0; font-size: 0.9rem; color: #666;">Version {APP_VERSION} · Last updated {APP_LAST_UPDATED}</p>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        # Fallback: no local logo, use columns + optional URL
+        logo_col, title_col = st.columns([1, 5])
+        with logo_col:
+            try:
+                st.image(WORKSTREAM_LOGO_URL, width=140, use_container_width=False)
+            except Exception:
+                pass
+        with title_col:
+            st.title("CSV Wrangler")
+            st.caption(f"Version {APP_VERSION} · Last updated {APP_LAST_UPDATED}")
+        st.divider()
+
+
 def main() -> None:
     st.set_page_config(
         page_title="CSV Wrangler",
@@ -473,25 +519,7 @@ def main() -> None:
         layout="wide",
     )
 
-    # Header: logo + title in one row with balanced spacing
-    logo_col, title_col = st.columns([1, 5])
-    with logo_col:
-        logo_shown = False
-        if os.path.exists(WORKSTREAM_LOGO_PATH):
-            try:
-                st.image(WORKSTREAM_LOGO_PATH, width=140, use_container_width=False)
-                logo_shown = True
-            except Exception:
-                pass
-        if not logo_shown:
-            try:
-                st.image(WORKSTREAM_LOGO_URL, width=140, use_container_width=False)
-            except Exception:
-                pass
-    with title_col:
-        st.title("CSV Wrangler")
-        st.caption(f"Version {APP_VERSION} · Last updated {APP_LAST_UPDATED}")
-    st.divider()
+    _render_header_with_logo()
     st.markdown(
         """
 This tool helps our marketing team turn messy vendor lead lists into a clean, consistent format we can use in our CRM.
