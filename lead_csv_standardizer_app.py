@@ -163,6 +163,16 @@ def clean_phone_number(value: str) -> str:
     return digits
 
 
+def is_phone_like_value(value: str) -> bool:
+    """Heuristic check: does this value look like a phone number?"""
+    if value is None:
+        return False
+    digits = re.sub(r"\D+", "", str(value))
+    if not digits:
+        return False
+    return 7 <= len(digits) <= 15
+
+
 def map_employee_count_to_range(value: str) -> str:
     """
     Map a numeric employee count into CRM picklist buckets:
@@ -314,31 +324,93 @@ def detect_issues(us_df: pd.DataFrame, non_us_df: pd.DataFrame) -> List[str]:
             "or handle these manually."
         )
 
+    # Additional phone-like columns (e.g. separate work / mobile phones)
+    phone_like_extra_cols: List[str] = []
+    for col in all_df.columns:
+        if col == "Phone Number":
+            continue
+        col_lower = str(col).lower()
+        if any(kw in col_lower for kw in ["phone", "mobile", "cell", "tel"]) and "fax" not in col_lower:
+            series = all_df[col].dropna().astype(str).head(50)
+            if not series.empty and series.apply(is_phone_like_value).mean() >= 0.5:
+                phone_like_extra_cols.append(col)
+    if phone_like_extra_cols:
+        issues.append(
+            "Additional phone-like column(s) detected that are not mapped to the main "
+            f"'Phone Number' field: {', '.join(phone_like_extra_cols)}."
+        )
+
     if not issues:
         issues.append("No obvious data issues detected.")
 
     return issues
 
 
-def auto_map_columns(
-    vendor_columns: List[str], config: dict
-) -> Dict[str, Optional[str]]:
+def auto_map_columns(df: pd.DataFrame, config: dict) -> Dict[str, Optional[str]]:
     """
     Return mapping of standard_field_id -> vendor_column (or None if not found).
+    Uses header synonyms first, then a content-based heuristic for phone numbers.
     """
-    synonym_index = build_synonym_index(config)
+    vendor_columns = list(df.columns)
+    build_synonym_index(config)  # kept for future use if needed
     normalized_vendor = {normalize_header(c): c for c in vendor_columns}
+    header_lower = {c: str(c).lower() for c in vendor_columns}
 
     mapping: Dict[str, Optional[str]] = {}
+
     for field in config.get("standard_fields", []):
         field_id = field["id"]
-        candidates = []
+        candidates: List[str] = []
+
+        # 1) Header-based synonym matching
         for syn in field.get("synonyms", []):
             key = normalize_header(syn)
             if key in normalized_vendor:
                 candidates.append(normalized_vendor[key])
 
-        mapping[field_id] = candidates[0] if candidates else None
+        if candidates:
+            mapping[field_id] = candidates[0]
+            continue
+
+        # 2) Content-based detection for phone numbers when header synonyms didn't match
+        if field_id.lower() == "phone number":
+            best_col = None
+            best_score = 0.0
+
+            for col in vendor_columns:
+                col_lower = header_lower[col]
+                if "fax" in col_lower:
+                    continue
+
+                # Quick hint from the header name
+                header_hint = any(
+                    kw in col_lower for kw in ["phone", "mobile", "cell", "tel"]
+                )
+
+                series = df[col].dropna().astype(str)
+                if series.empty:
+                    continue
+
+                sample = series.head(50)
+                if sample.empty:
+                    continue
+
+                phone_like_ratio = float(sample.apply(is_phone_like_value).mean())
+
+                # If there is no header hint, require a stronger phone-like signal
+                if not header_hint and phone_like_ratio < 0.7:
+                    continue
+
+                if phone_like_ratio < 0.4:
+                    continue
+
+                if phone_like_ratio > best_score:
+                    best_score = phone_like_ratio
+                    best_col = col
+
+            mapping[field_id] = best_col
+        else:
+            mapping[field_id] = None
 
     return mapping
 
@@ -458,7 +530,7 @@ def main() -> None:
     st.write(list(df.columns))
 
     st.subheader("Step 2 · Auto-mapping to your standard schema")
-    auto_mapping = auto_map_columns(list(df.columns), config)
+    auto_mapping = auto_map_columns(df, config)
 
     st.write(
         "You can adjust any of these mappings. "
