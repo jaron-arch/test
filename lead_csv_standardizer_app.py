@@ -470,9 +470,18 @@ def main() -> None:
 
     st.title("Lead CSV Standardizer")
     st.caption(f"Version {APP_VERSION} · Last updated {APP_LAST_UPDATED}")
-    st.write(
-        "Upload any vendor lead list CSV and map it into a single, "
-        "standard structure your whole team can use."
+    st.markdown(
+        """
+This tool helps our marketing team turn messy vendor lead lists into a clean, consistent format we can use in our CRM.
+
+**What it does for you:**
+- Upload a CSV from any vendor and the tool will **auto-detect and map columns** (like name, email, company, phone, location, etc.) into our **standard header template**.
+- It **cleans the data**, including standardizing phone numbers, converting employee counts into the CRM’s size ranges, and splitting US vs. non‑US leads.
+- It shows a **summary of suspected issues** (missing emails, odd phone numbers, unmapped columns, non‑US leads) so you know what may still need manual review.
+- It outputs **two CSVs** you can download: a cleaned US leads file and a separate non‑US leads file, each with extra blank columns for call tracking (`Assigned To`, `Tier`, `Member Status`).
+
+To use it, fill in your name and email below, upload a vendor CSV, confirm the column mappings, then click **“Generate standardized CSV”** to review issues and download the results.
+        """
     )
 
     # Required user info for auditing
