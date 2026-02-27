@@ -1,5 +1,7 @@
 import io
+import os
 import re
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -62,6 +64,59 @@ US_STATE_ABBREVIATIONS = {
     "WV",
     "WI",
     "WY",
+}
+
+US_STATE_NAMES = {
+    "ALABAMA",
+    "ALASKA",
+    "ARIZONA",
+    "ARKANSAS",
+    "CALIFORNIA",
+    "COLORADO",
+    "CONNECTICUT",
+    "DELAWARE",
+    "FLORIDA",
+    "GEORGIA",
+    "HAWAII",
+    "IDAHO",
+    "ILLINOIS",
+    "INDIANA",
+    "IOWA",
+    "KANSAS",
+    "KENTUCKY",
+    "LOUISIANA",
+    "MAINE",
+    "MARYLAND",
+    "MASSACHUSETTS",
+    "MICHIGAN",
+    "MINNESOTA",
+    "MISSISSIPPI",
+    "MISSOURI",
+    "MONTANA",
+    "NEBRASKA",
+    "NEVADA",
+    "NEW HAMPSHIRE",
+    "NEW JERSEY",
+    "NEW MEXICO",
+    "NEW YORK",
+    "NORTH CAROLINA",
+    "NORTH DAKOTA",
+    "OHIO",
+    "OKLAHOMA",
+    "OREGON",
+    "PENNSYLVANIA",
+    "RHODE ISLAND",
+    "SOUTH CAROLINA",
+    "SOUTH DAKOTA",
+    "TENNESSEE",
+    "TEXAS",
+    "UTAH",
+    "VERMONT",
+    "VIRGINIA",
+    "WASHINGTON",
+    "WEST VIRGINIA",
+    "WISCONSIN",
+    "WYOMING",
 }
 
 
@@ -168,7 +223,9 @@ def split_us_and_non_us(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             return False
 
         # Fall back to state if no country information
-        if state_norm and state_norm in US_STATE_ABBREVIATIONS:
+        if state_norm and (
+            state_norm in US_STATE_ABBREVIATIONS or state_norm in US_STATE_NAMES
+        ):
             return True
 
         # If we have some state but it's not a US abbreviation, assume non-US
@@ -182,6 +239,85 @@ def split_us_and_non_us(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     us_df = df[mask_us].reset_index(drop=True)
     non_us_df = df[~mask_us].reset_index(drop=True)
     return us_df, non_us_df
+
+
+def detect_issues(us_df: pd.DataFrame, non_us_df: pd.DataFrame) -> List[str]:
+    """Generate human-readable descriptions of suspected data issues."""
+    issues: List[str] = []
+
+    if us_df is None and non_us_df is None:
+        return issues
+
+    frames = []
+    if us_df is not None:
+        frames.append(us_df)
+    if non_us_df is not None:
+        frames.append(non_us_df)
+
+    if not frames:
+        return ["No rows were found in the uploaded file."]
+
+    all_df = pd.concat(frames, ignore_index=True)
+    total_rows = len(all_df)
+
+    # Missing emails
+    if "Email" in all_df.columns:
+        missing_email = all_df["Email"].astype(str).str.strip() == ""
+        count_missing_email = int(missing_email.sum())
+        if count_missing_email > 0:
+            issues.append(
+                f"{count_missing_email} row(s) are missing an Email value. "
+                "These leads may not be usable for email outreach."
+            )
+
+    # Suspicious phone numbers (too short or too long after cleaning)
+    if "Phone Number" in all_df.columns:
+        phone_series = all_df["Phone Number"].astype(str).str.strip()
+        non_empty = phone_series != ""
+        lengths = phone_series.str.len()
+        bad_phones = non_empty & ((lengths < 10) | (lengths > 15))
+        count_bad_phones = int(bad_phones.sum())
+        if count_bad_phones > 0:
+            issues.append(
+                f"{count_bad_phones} phone number(s) look suspicious in length "
+                "(less than 10 digits or more than 15 digits) after cleaning."
+            )
+
+    # Employee headcount values that didn't map cleanly to a known bucket
+    allowed_buckets = {"", "0-95", "0-99", "100-499", "500-999", "1000-1999", "2,000+"}
+    if "Employee headcount size" in all_df.columns:
+        emp_series = all_df["Employee headcount size"].astype(str).str.strip()
+        invalid_mask = ~emp_series.isin(allowed_buckets)
+        invalid_counts = emp_series[invalid_mask].value_counts().head(5)
+        invalid_total = int(invalid_mask.sum())
+        if invalid_total > 0:
+            examples = ", ".join(list(invalid_counts.index))
+            issues.append(
+                f"{invalid_total} row(s) have employee headcount values that did not "
+                f"map cleanly into CRM buckets. Example values: {examples}."
+            )
+
+    # Non-US leads present
+    if non_us_df is not None and not non_us_df.empty:
+        count_non_us = len(non_us_df)
+        issues.append(
+            f"{count_non_us} lead(s) were classified as non-US and moved to the "
+            "separate non-US CSV. Review them if you expected only US leads."
+        )
+
+    # Unmapped/raw columns
+    raw_cols = [c for c in all_df.columns if c.startswith("raw_")]
+    if raw_cols:
+        issues.append(
+            f"{len(raw_cols)} column(s) were not mapped into the standard template "
+            "and are kept as raw_ columns. You may want to update the template "
+            "or handle these manually."
+        )
+
+    if not issues:
+        issues.append("No obvious data issues detected.")
+
+    return issues
 
 
 def auto_map_columns(
@@ -266,6 +402,19 @@ def main() -> None:
         "Upload any vendor lead list CSV and map it into a single, "
         "standard structure your whole team can use."
     )
+
+    # Required user info for auditing
+    st.markdown("### User details")
+    user_name = st.text_input("Your name (required)")
+    user_email = st.text_input("Your email (required)")
+
+    # Initialize session state for generated outputs and issues
+    if "us_df" not in st.session_state:
+        st.session_state["us_df"] = None
+    if "non_us_df" not in st.session_state:
+        st.session_state["non_us_df"] = None
+    if "issues" not in st.session_state:
+        st.session_state["issues"] = []
 
     try:
         config = load_config()
@@ -363,7 +512,12 @@ def main() -> None:
 
     st.subheader("Step 3 · Generate standardized file")
 
-    if st.button("Generate standardized CSV", type="primary"):
+    generate_disabled = not (user_name.strip() and user_email.strip())
+
+    if generate_disabled:
+        st.info("Enter your name and email above to enable generation.")
+
+    if st.button("Generate standardized CSV", type="primary", disabled=generate_disabled):
         standardized_df = apply_mapping_to_df(df, config, editable_mapping)
 
         # Standardize phone numbers
@@ -387,11 +541,53 @@ def main() -> None:
         # Split into US and non-US based on location
         us_df, non_us_df = split_us_and_non_us(standardized_df)
 
+        st.session_state["us_df"] = us_df
+        st.session_state["non_us_df"] = non_us_df
+
+        # Analyze suspected issues
+        issues = detect_issues(us_df, non_us_df)
+        st.session_state["issues"] = issues
+
+        # Log usage to a CSV file
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "user_name": user_name.strip(),
+            "user_email": user_email.strip(),
+            "total_rows": len(standardized_df),
+            "us_rows": len(us_df),
+            "non_us_rows": len(non_us_df),
+            "issue_count": len(issues),
+            "issues_summary": "; ".join(issues),
+        }
+        log_path = "usage_log.csv"
+        try:
+            if os.path.exists(log_path):
+                log_df = pd.read_csv(log_path)
+                log_df = pd.concat([log_df, pd.DataFrame([log_entry])], ignore_index=True)
+            else:
+                log_df = pd.DataFrame([log_entry])
+            log_df.to_csv(log_path, index=False)
+        except Exception:
+            # Logging failures should not break the app
+            pass
+
         st.success(
             f"Standardized data generated. US rows: {len(us_df)}, "
             f"non-US rows: {len(non_us_df)}."
         )
 
+    us_df = st.session_state.get("us_df")
+    non_us_df = st.session_state.get("non_us_df")
+    issues = st.session_state.get("issues", [])
+
+    st.subheader("Suspected issues in this file")
+    if issues:
+        for msg in issues:
+            st.write(f"- {msg}")
+    else:
+        st.write("No obvious data issues detected yet. Generate a file to see results.")
+
+    if us_df is not None:
         st.markdown("**Preview · US leads (first 50 rows)**")
         st.dataframe(us_df.head(50))
 
@@ -406,20 +602,30 @@ def main() -> None:
             mime="text/csv",
         )
 
-        if not non_us_df.empty:
-            st.markdown("**Preview · Non-US leads (first 50 rows)**")
-            st.dataframe(non_us_df.head(50))
+    if non_us_df is not None and not non_us_df.empty:
+        st.markdown("**Preview · Non-US leads (first 50 rows)**")
+        st.dataframe(non_us_df.head(50))
 
-            csv_buffer_non_us = io.StringIO()
-            non_us_df.to_csv(csv_buffer_non_us, index=False)
-            csv_bytes_non_us = csv_buffer_non_us.getvalue().encode("utf-8")
+        csv_buffer_non_us = io.StringIO()
+        non_us_df.to_csv(csv_buffer_non_us, index=False)
+        csv_bytes_non_us = csv_buffer_non_us.getvalue().encode("utf-8")
 
-            st.download_button(
-                label="Download non-US leads CSV",
-                data=csv_bytes_non_us,
-                file_name="standardized_leads_non_us.csv",
-                mime="text/csv",
-            )
+        st.download_button(
+            label="Download non-US leads CSV",
+            data=csv_bytes_non_us,
+            file_name="standardized_leads_non_us.csv",
+            mime="text/csv",
+        )
+
+    st.subheader("Usage log")
+    try:
+        if os.path.exists("usage_log.csv"):
+            log_df = pd.read_csv("usage_log.csv")
+            st.dataframe(log_df.tail(50))
+        else:
+            st.write("No usage has been logged yet.")
+    except Exception as e:  # noqa: BLE001
+        st.write(f"Could not read usage log: {e}")
 
 
 if __name__ == "__main__":
