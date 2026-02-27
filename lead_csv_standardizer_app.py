@@ -461,15 +461,36 @@ def apply_mapping_to_df(
     return standardized
 
 
+# Workstream logo: use local file if present, else official URL (workstream.us)
+WORKSTREAM_LOGO_PATH = "logo website.svg"
+WORKSTREAM_LOGO_URL = "https://www.workstream.us/hubfs/Workstream-2024/Images/dark%2Bwhite%20text.svg"
+
+
 def main() -> None:
     st.set_page_config(
-        page_title="Lead CSV Standardizer",
+        page_title="CSV Wrangler",
         page_icon="📊",
         layout="wide",
     )
 
-    st.title("Lead CSV Standardizer")
-    st.caption(f"Version {APP_VERSION} · Last updated {APP_LAST_UPDATED}")
+    # Header: logo + title
+    logo_col, title_col = st.columns([1, 4])
+    with logo_col:
+        logo_shown = False
+        if os.path.exists(WORKSTREAM_LOGO_PATH):
+            try:
+                st.image(WORKSTREAM_LOGO_PATH, width=180, use_container_width=False)
+                logo_shown = True
+            except Exception:
+                pass
+        if not logo_shown:
+            try:
+                st.image(WORKSTREAM_LOGO_URL, width=180, use_container_width=False)
+            except Exception:
+                pass  # If logo fails to load, continue without it
+    with title_col:
+        st.title("CSV Wrangler")
+        st.caption(f"Version {APP_VERSION} · Last updated {APP_LAST_UPDATED}")
     st.markdown(
         """
 This tool helps our marketing team turn messy vendor lead lists into a clean, consistent format we can use in our CRM.
