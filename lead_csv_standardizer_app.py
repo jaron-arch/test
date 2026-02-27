@@ -7,6 +7,74 @@ import streamlit as st
 import yaml
 
 
+APP_VERSION = "V2"
+APP_LAST_UPDATED = "2026-02-27"
+
+
+US_STATE_ABBREVIATIONS = {
+    "AL",
+    "AK",
+    "AZ",
+    "AR",
+    "CA",
+    "CO",
+    "CT",
+    "DE",
+    "FL",
+    "GA",
+    "HI",
+    "ID",
+    "IL",
+    "IN",
+    "IA",
+    "KS",
+    "KY",
+    "LA",
+    "ME",
+    "MD",
+    "MA",
+    "MI",
+    "MN",
+    "MS",
+    "MO",
+    "MT",
+    "NE",
+    "NV",
+    "NH",
+    "NJ",
+    "NM",
+    "NY",
+    "NC",
+    "ND",
+    "OH",
+    "OK",
+    "OR",
+    "PA",
+    "RI",
+    "SC",
+    "SD",
+    "TN",
+    "TX",
+    "UT",
+    "VT",
+    "VA",
+    "WA",
+    "WV",
+    "WI",
+    "WY",
+}
+
+
+US_COUNTRY_KEYWORDS = {
+    "united states",
+    "united states of america",
+    "usa",
+    "u.s.a.",
+    "u.s.",
+    "us",
+}
+
+
 def load_config(path: str = "standard_config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -29,6 +97,91 @@ def build_synonym_index(config: dict) -> Dict[str, List[str]]:
             key = normalize_header(syn)
             index.setdefault(key, []).append(field_id)
     return index
+
+
+def clean_phone_number(value: str) -> str:
+    """Keep only digits so phone numbers are standardized."""
+    if value is None:
+        return ""
+    text = str(value)
+    digits = re.sub(r"\D+", "", text)
+    return digits
+
+
+def map_employee_count_to_range(value: str) -> str:
+    """
+    Map a numeric employee count into CRM picklist buckets:
+    0-95, 0-99, 100-499, 500-999, 1000-1999, 2,000+.
+    """
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    # Try to extract the first integer found in the text
+    match = re.search(r"\d+", text.replace(",", ""))
+    if not match:
+        return text  # leave as-is if we can't parse a number
+
+    try:
+        count = int(match.group(0))
+    except ValueError:
+        return text
+
+    if count <= 95:
+        return "0-95"
+    if count <= 99:
+        return "0-99"
+    if count <= 499:
+        return "100-499"
+    if count <= 999:
+        return "500-999"
+    if count <= 1999:
+        return "1000-1999"
+    return "2,000+"
+
+
+def split_us_and_non_us(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split the standardized dataframe into US and non-US rows.
+    Uses State and any Country / raw_Country columns when present.
+    """
+
+    def is_us_row(row: pd.Series) -> bool:
+        state = str(row.get("State", "") or "").strip()
+        country = ""
+        for col in ("Country", "raw_Country", "raw_country"):
+            if col in row.index:
+                country = str(row.get(col, "") or "").strip()
+                if country:
+                    break
+
+        state_norm = state.upper()
+        country_norm = country.lower()
+
+        if country_norm:
+            if any(keyword in country_norm for keyword in US_COUNTRY_KEYWORDS):
+                return True
+            # Explicit non-US country
+            return False
+
+        # Fall back to state if no country information
+        if state_norm and state_norm in US_STATE_ABBREVIATIONS:
+            return True
+
+        # If we have some state but it's not a US abbreviation, assume non-US
+        if state_norm:
+            return False
+
+        # No clear location info: default to US to avoid dropping too many
+        return True
+
+    mask_us = df.apply(is_us_row, axis=1)
+    us_df = df[mask_us].reset_index(drop=True)
+    non_us_df = df[~mask_us].reset_index(drop=True)
+    return us_df, non_us_df
 
 
 def auto_map_columns(
@@ -76,13 +229,27 @@ def apply_mapping_to_df(
         else:
             standardized[field_id] = ""
 
+    # Add blank call-related columns that will be filled in later
+    call_columns = ["Assigned To", "Tier", "Member Status"]
+    for col in call_columns:
+        standardized[col] = ""
+
     if keep_unmapped:
         used_vendor_cols = {v for v in mapping.values() if v is not None}
         for col in df.columns:
             if col not in used_vendor_cols:
                 standardized[f"{unmapped_prefix}{col}"] = df[col]
 
+    # Remove duplicate columns and enforce column order:
+    # standard fields -> call columns -> unmapped "raw_" columns to the far right.
     standardized = standardized.loc[:, ~standardized.columns.duplicated()]
+    raw_cols = [
+        c
+        for c in standardized.columns
+        if c not in standard_columns and c not in call_columns
+    ]
+    ordered_cols = standard_columns + call_columns + raw_cols
+    standardized = standardized[ordered_cols]
     return standardized
 
 
@@ -94,6 +261,7 @@ def main() -> None:
     )
 
     st.title("Lead CSV Standardizer")
+    st.caption(f"Version {APP_VERSION} · Last updated {APP_LAST_UPDATED}")
     st.write(
         "Upload any vendor lead list CSV and map it into a single, "
         "standard structure your whole team can use."
@@ -198,21 +366,60 @@ def main() -> None:
     if st.button("Generate standardized CSV", type="primary"):
         standardized_df = apply_mapping_to_df(df, config, editable_mapping)
 
-        st.success("Standardized data generated.")
+        # Standardize phone numbers
+        if "Phone Number" in standardized_df.columns:
+            standardized_df["Phone Number"] = (
+                standardized_df["Phone Number"]
+                .astype(str)
+                .fillna("")
+                .map(clean_phone_number)
+            )
 
-        st.markdown("**Preview (first 50 rows)**")
-        st.dataframe(standardized_df.head(50))
+        # Map employee headcount size into CRM picklist ranges
+        if "Employee headcount size" in standardized_df.columns:
+            standardized_df["Employee headcount size"] = (
+                standardized_df["Employee headcount size"]
+                .astype(str)
+                .fillna("")
+                .map(map_employee_count_to_range)
+            )
 
-        csv_buffer = io.StringIO()
-        standardized_df.to_csv(csv_buffer, index=False)
-        csv_bytes = csv_buffer.getvalue().encode("utf-8")
+        # Split into US and non-US based on location
+        us_df, non_us_df = split_us_and_non_us(standardized_df)
+
+        st.success(
+            f"Standardized data generated. US rows: {len(us_df)}, "
+            f"non-US rows: {len(non_us_df)}."
+        )
+
+        st.markdown("**Preview · US leads (first 50 rows)**")
+        st.dataframe(us_df.head(50))
+
+        csv_buffer_us = io.StringIO()
+        us_df.to_csv(csv_buffer_us, index=False)
+        csv_bytes_us = csv_buffer_us.getvalue().encode("utf-8")
 
         st.download_button(
-            label="Download standardized CSV",
-            data=csv_bytes,
-            file_name="standardized_leads.csv",
+            label="Download standardized US CSV",
+            data=csv_bytes_us,
+            file_name="standardized_leads_us.csv",
             mime="text/csv",
         )
+
+        if not non_us_df.empty:
+            st.markdown("**Preview · Non-US leads (first 50 rows)**")
+            st.dataframe(non_us_df.head(50))
+
+            csv_buffer_non_us = io.StringIO()
+            non_us_df.to_csv(csv_buffer_non_us, index=False)
+            csv_bytes_non_us = csv_buffer_non_us.getvalue().encode("utf-8")
+
+            st.download_button(
+                label="Download non-US leads CSV",
+                data=csv_bytes_non_us,
+                file_name="standardized_leads_non_us.csv",
+                mime="text/csv",
+            )
 
 
 if __name__ == "__main__":
